@@ -1,0 +1,9 @@
+# Build
+*.exe
+
+# Gesprekken (SQLite) en geüploade bestanden: lokaal, mogelijk persoonlijk
+data/
+uploads/
+
+# Persoonlijke notities
+instr.txt

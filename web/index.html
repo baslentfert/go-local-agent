@@ -1,0 +1,1027 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>go-local-agent</title>
+<style>
+  :root {
+    --bg: #f7f7f5; --panel: #ffffff; --text: #1f1f1d; --muted: #75746f; --line: #e4e3df;
+    --accent: #c96442; --accent-text: #ffffff; --user: #efeee9; --code: #f1f0ec;
+    --tool: #f4f1ea; --ok: #2f7d4f; --err: #b3261e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1c1c1b; --panel: #252524; --text: #ecebe6; --muted: #9c9a93; --line: #3a3937;
+      --accent: #d97757; --accent-text: #1c1c1b; --user: #30302e; --code: #2e2e2c;
+      --tool: #2b2a27; --ok: #6cc28d; --err: #f08a80;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  #shell { display: flex; height: 100%; }
+  #app { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+
+  /* ---- zijbalk met gesprekken ---- */
+  #side {
+    width: 264px; flex-shrink: 0; display: flex; flex-direction: column; gap: 8px;
+    background: var(--panel); border-right: 1px solid var(--line); padding: 10px 8px;
+  }
+  body.side-closed #side { display: none; }
+  .side-top button { width: 100%; padding: 8px 12px; font-size: 14px; }
+  #search {
+    font: inherit; font-size: 13px; color: var(--text); background: var(--bg);
+    border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px;
+  }
+  #convs { flex: 1; overflow-y: auto; margin: 0 -4px; padding: 0 4px; }
+  #convs .grp { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; margin: 12px 8px 4px; }
+  #convs .none { font-size: 13px; color: var(--muted); padding: 8px; }
+  .conv {
+    display: flex; align-items: center; gap: 4px; padding: 6px 8px; border-radius: 8px;
+    cursor: pointer; font-size: 13.5px;
+  }
+  .conv:hover { background: var(--user); }
+  .conv.active { background: var(--user); font-weight: 600; }
+  .conv .ttl { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .conv .acts { display: none; gap: 2px; }
+  .conv:hover .acts, .conv.active .acts, .conv .acts:focus-within { display: flex; }
+  .conv .acts button { border: 0; background: none; padding: 2px 5px; font-size: 13px; color: var(--muted); }
+  .conv .acts button:hover { color: var(--text); }
+  .conv .acts button.sure { color: var(--err); font-weight: 600; font-size: 12px; }
+  .conv input { flex: 1; min-width: 0; font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--accent); border-radius: 6px; padding: 2px 6px; }
+  #toggle { padding: 4px 9px; font-size: 15px; }
+  #backdrop { display: none; }
+  @media (max-width: 899px) {
+    #side { position: fixed; z-index: 20; top: 0; bottom: 0; left: 0; display: flex; transform: translateX(-105%); transition: transform .2s; }
+    body.side-closed #side { display: flex; }
+    body.side-open #side { transform: none; box-shadow: 0 0 24px rgba(0,0,0,.25); }
+    body.side-open #backdrop { display: block; position: fixed; inset: 0; z-index: 15; background: rgba(0,0,0,.3); }
+  }
+
+  /* ---- commandolijst (/) ---- */
+  form { position: relative; }
+  #palette {
+    display: none; position: absolute; left: 0; right: 0; bottom: calc(100% + 8px); z-index: 5;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 4px;
+    box-shadow: 0 6px 24px rgba(0,0,0,.12);
+  }
+  #palette.open { display: block; }
+  #palette .item { display: flex; gap: 12px; align-items: baseline; padding: 6px 10px; border-radius: 6px; cursor: pointer; }
+  #palette .item.sel { background: var(--user); }
+  #palette .name { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 13px; color: var(--accent); min-width: 110px; }
+  #palette .desc { font-size: 13px; color: var(--muted); }
+  #palette .hint { font-size: 11px; color: var(--muted); padding: 4px 10px 2px; border-top: 1px solid var(--line); margin-top: 4px; }
+
+  body {
+    background: var(--bg); color: var(--text);
+    font: 15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  header {
+    display: flex; align-items: center; gap: 12px; padding: 10px 16px;
+    border-bottom: 1px solid var(--line); background: var(--panel);
+  }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; }
+  #model { color: var(--muted); font-size: 13px; }
+  #dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  #dot.on { background: var(--ok); }
+  header .spacer { flex: 1; }
+  button {
+    font: inherit; font-size: 13px; border: 1px solid var(--line); background: var(--panel);
+    color: var(--text); border-radius: 8px; padding: 5px 12px; cursor: pointer;
+  }
+  button:hover { border-color: var(--muted); }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+
+  main { flex: 1; overflow-y: auto; }
+  #log { max-width: 820px; margin: 0 auto; padding: 20px 16px 40px; }
+  .msg { margin: 14px 0; }
+  .user {
+    background: var(--user); padding: 10px 14px; border-radius: 12px;
+    margin-left: auto; width: fit-content; max-width: 85%; white-space: pre-wrap;
+  }
+  .assistant > div > :first-child { margin-top: 0; }
+  .assistant > div > :last-child { margin-bottom: 0; }
+  .assistant p { margin: 0 0 .7em; }
+  .assistant h1, .assistant h2, .assistant h3, .assistant h4, .assistant h5, .assistant h6 {
+    margin: 1.1em 0 .45em; line-height: 1.3; font-weight: 650;
+  }
+  .assistant h1 { font-size: 1.45em; } .assistant h2 { font-size: 1.25em; }
+  .assistant h3 { font-size: 1.1em; }  .assistant h4, .assistant h5, .assistant h6 { font-size: 1em; }
+  .assistant ul, .assistant ol { margin: 0 0 .7em; padding-left: 1.5em; }
+  .assistant li { margin: .15em 0; }
+  .assistant li > ul, .assistant li > ol { margin: .15em 0; }
+  .assistant li.task { list-style: none; margin-left: -1.3em; }
+  .assistant blockquote { margin: 0 0 .7em; padding: .1em 0 .1em 12px; border-left: 3px solid var(--line); color: var(--muted); }
+  .assistant hr { border: 0; border-top: 1px solid var(--line); margin: 1em 0; }
+  .assistant a { color: var(--accent); }
+  .assistant .table { overflow-x: auto; margin: 0 0 .7em; }
+  .assistant table { border-collapse: collapse; font-size: 14px; }
+  .assistant th, .assistant td { border: 1px solid var(--line); padding: 5px 10px; text-align: left; vertical-align: top; }
+  .assistant th { background: var(--code); font-weight: 600; }
+  .assistant pre { position: relative; margin: 0 0 .7em; }
+  .assistant pre .lang {
+    position: absolute; top: 4px; right: 8px; font-size: 11px; color: var(--muted);
+    font-family: system-ui, sans-serif;
+  }
+  pre, code { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 13px; }
+  pre { background: var(--code); padding: 10px 12px; border-radius: 8px; overflow-x: auto; }
+  :not(pre) > code { background: var(--code); padding: 1px 5px; border-radius: 4px; }
+  details { color: var(--muted); font-size: 13px; margin: 6px 0; }
+  details summary { cursor: pointer; user-select: none; }
+  details .body { white-space: pre-wrap; padding: 6px 0 0 14px; border-left: 2px solid var(--line); margin-top: 4px; }
+  .tool {
+    background: var(--tool); border: 1px solid var(--line); border-radius: 8px;
+    padding: 6px 10px; font-size: 13px;
+  }
+  .tool .name { font-weight: 600; }
+  .tool.sub { margin-left: 28px; padding: 4px 10px; background: transparent; border-style: dashed; }
+  .tool .who { display: block; font-size: 11px; color: var(--accent); margin-bottom: 2px; }
+  .tool ol.tasks { margin: 6px 0 2px; padding-left: 22px; color: var(--muted); }
+  .tool ol.tasks li { margin: 1px 0; }
+  .tool .args { font-family: ui-monospace, Consolas, monospace; color: var(--muted); word-break: break-all; }
+  .tool details .body { max-height: 260px; overflow: auto; font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+  .confirm {
+    border: 1px solid var(--accent); border-radius: 8px; padding: 10px 12px;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+  }
+  .confirm span { flex: 1; min-width: 200px; }
+  .stats, .status { color: var(--muted); font-size: 12px; }
+  .error { color: var(--err); font-size: 13px; }
+  .spin { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; color: var(--accent); white-space: pre; margin-right: 6px; }
+  details.live .body { max-height: 220px; overflow-y: auto; }
+
+  footer { border-top: 1px solid var(--line); background: var(--panel); padding: 12px 16px; }
+  form { max-width: 820px; margin: 0 auto; display: flex; gap: 8px; align-items: flex-end; }
+  textarea {
+    flex: 1; resize: none; font: inherit; color: var(--text); background: var(--bg);
+    border: 1px solid var(--line); border-radius: 10px; padding: 9px 12px; max-height: 200px;
+  }
+  textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  #attach { font-size: 18px; line-height: 1; padding: 7px 12px; border-radius: 10px; }
+  #attached { max-width: 820px; margin: 0 auto; display: flex; flex-wrap: wrap; gap: 6px; }
+  #attached:not(:empty) { margin-bottom: 8px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px; font-size: 12px; max-width: 100%;
+    background: var(--tool); border: 1px solid var(--line); border-radius: 999px; padding: 3px 4px 3px 10px;
+  }
+  .chip .fname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .chip .size { color: var(--muted); }
+  .chip button { border: 0; background: none; padding: 0 6px; font-size: 14px; line-height: 1; color: var(--muted); }
+  .chip button:hover { color: var(--text); }
+  .chip.bad { border-color: var(--err); color: var(--err); background: transparent; }
+  .chip.bad .size { color: var(--err); opacity: .8; }
+  .user-files { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; margin-top: 6px; }
+  .user-files .chip { padding-right: 10px; }
+  #drop {
+    display: none; position: fixed; inset: 12px; z-index: 10; border: 2px dashed var(--accent); border-radius: 16px;
+    background: color-mix(in srgb, var(--bg) 85%, transparent); color: var(--accent);
+    align-items: center; justify-content: center; font-size: 18px; font-weight: 600; pointer-events: none;
+  }
+  body.dragging #drop { display: flex; }
+  #conn { color: var(--muted); font-size: 12px; }
+  #ctx { display: none; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  #ctx .bar { width: 64px; height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+  #ctx .bar i { display: block; height: 100%; width: 0; background: var(--ok); transition: width .3s; }
+  #ctx.warn .bar i { background: var(--accent); }
+  #ctx.full .bar i { background: var(--err); }
+  .compact { font-size: 12px; color: var(--muted); }
+  .compact details { margin: 0; }
+  .compact .body { white-space: normal; }
+  #retry { display: none; padding: 2px 8px; font-size: 12px; }
+  .notice {
+    color: var(--muted); font-size: 12px; text-align: center; margin: 18px 0;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .notice::before, .notice::after { content: ""; flex: 1; border-top: 1px solid var(--line); }
+  button:disabled { opacity: .5; cursor: default; }
+  #empty { color: var(--muted); text-align: center; margin-top: 18vh; }
+  #empty b { color: var(--text); }
+</style>
+</head>
+<body>
+<div id="shell">
+<aside id="side" aria-label="Gesprekken">
+  <div class="side-top">
+    <button id="new" class="primary" type="button">+ Nieuw gesprek</button>
+  </div>
+  <input id="search" type="search" placeholder="Zoek in gesprekken…" aria-label="Zoek in gesprekken">
+  <nav id="convs"></nav>
+</aside>
+<div id="backdrop"></div>
+<div id="app">
+<header>
+  <button id="toggle" type="button" title="Gesprekken tonen/verbergen (/gesprekken)" aria-label="Gesprekken tonen of verbergen">☰</button>
+  <span id="dot" title="verbinding"></span>
+  <h1>go-local-agent</h1>
+  <span id="model"></span>
+  <span class="spacer"></span>
+  <span id="ctx" title="Hoe vol de context van het model is. Vanaf 75% wordt er automatisch ingekort of samengevat; /compact doet het handmatig.">
+    <span class="bar"><i></i></span><span class="num"></span>
+  </span>
+  <span id="conn">verbinden…</span>
+  <button id="retry" type="button">Nu proberen</button>
+</header>
+<main id="scroller">
+  <div id="log">
+    <div id="empty"><b>Lokale agent via Ollama</b><br>Vraag iets, laat bestanden lezen, een commando draaien of online zoeken.</div>
+  </div>
+</main>
+<div id="drop">Laat los om toe te voegen (tekst, PDF of afbeelding)</div>
+<footer>
+  <div id="attached"></div>
+  <form id="form">
+    <div id="palette" role="listbox" aria-label="Commando's"></div>
+    <button id="attach" type="button" title="Bestand toevoegen: tekst, PDF of afbeelding (of sleep / plak het hier)" aria-label="Bestand toevoegen">+</button>
+    <input id="file" type="file" multiple hidden>
+    <textarea id="input" rows="1" autocomplete="off"placeholder="Typ je vraag… (Enter = versturen, Shift+Enter = nieuwe regel, / = commando's)" autofocus></textarea>
+    <button id="send" class="primary" type="submit">Verstuur</button>
+  </form>
+</footer>
+</div>
+</div>
+
+<script>
+const log = document.getElementById('log');
+const scroller = document.getElementById('scroller');
+const input = document.getElementById('input');
+const sendBtn = document.getElementById('send');
+const dot = document.getElementById('dot');
+const modelEl = document.getElementById('model');
+const connEl = document.getElementById('conn');
+const retryBtn = document.getElementById('retry');
+
+let busy = false;
+let cur = null;        // huidig assistant-blok
+let statusEl = null;
+
+// ---------- weergave ----------
+
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+}
+function nearBottom() { return scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 80; }
+function add(node) {
+  document.getElementById('empty')?.remove();
+  const stick = nearBottom();
+  log.appendChild(node);
+  if (stick) scroller.scrollTop = scroller.scrollHeight;
+  return node;
+}
+function keepBottom(fn) { const stick = nearBottom(); fn(); if (stick) scroller.scrollTop = scroller.scrollHeight; }
+function emptyHint() {
+  const d = el('div'); d.id = 'empty';
+  d.append(el('b', null, 'Lokale agent via Ollama'), el('br'),
+    'Vraag iets, voeg een bestand toe, laat een commando draaien of zoek online. Typ / voor commando\'s.');
+  return d;
+}
+function clearLog() { log.replaceChildren(emptyHint()); cur = null; statusEl = null; }
+
+// ---------- markdown ----------
+// Eigen renderer in plaats van een bibliotheek: modeluitvoer kan (via fetch_url) tekst van
+// vreemde websites bevatten. Daarom wordt ALLES eerst ge-escaped; er komt nooit ruwe HTML door.
+// Werkt ook met half binnengekomen tekst tijdens het streamen (bv. een nog open codeblok).
+
+function esc(s) {
+  return s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function inline(s) {
+  const stash = [];
+  const keep = html => '\u0000' + (stash.push(html) - 1) + '\u0000';
+  s = s.replace(/`([^`\n]+)`/g, (_, c) => keep('<code>' + esc(c) + '</code>'));
+  s = s.replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g,
+    (_, t, u) => keep(`<a href="${esc(u)}" target="_blank" rel="noopener noreferrer">${esc(t)}</a>`));
+  s = s.replace(/(^|[\s(])(https?:\/\/[^\s<>()]+[^\s<>().,;:!?'"])/g,
+    (_, pre, u) => pre + keep(`<a href="${esc(u)}" target="_blank" rel="noopener noreferrer">${esc(u)}</a>`));
+  s = esc(s)
+    .replace(/\*\*(?!\s)(.+?)(?<!\s)\*\*/g, '<strong>$1</strong>')
+    .replace(/__(?!\s)(.+?)(?<!\s)__/g, '<strong>$1</strong>')
+    .replace(/(^|[^*\w])\*(?![\s*])(.+?)(?<![\s*])\*(?!\*)/g, '$1<em>$2</em>')
+    .replace(/(^|[^\w])_(?![\s_])(.+?)(?<![\s_])_(?!\w)/g, '$1<em>$2</em>')
+    .replace(/~~(?!\s)(.+?)(?<!\s)~~/g, '<del>$1</del>');
+  return s.replace(/\u0000(\d+)\u0000/g, (_, n) => stash[n]);
+}
+
+const RE_FENCE = /^\s*(`{3,}|~{3,})\s*([\w+#.-]*)/;
+const RE_HEAD = /^(#{1,6})\s+(.*?)\s*#*\s*$/;
+const RE_HR = /^\s{0,3}([-*_])(\s*\1){2,}\s*$/;
+const RE_QUOTE = /^\s*>/;
+const RE_LIST = /^(\s*)([-*+]|\d{1,9}[.)])\s+/;
+const RE_TROW = /^\s*\|.*\|\s*$/;
+const RE_TSEP = /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/;
+
+function startsBlock(l) {
+  return RE_FENCE.test(l) || RE_HEAD.test(l) || RE_HR.test(l) || RE_QUOTE.test(l) || RE_LIST.test(l);
+}
+
+function md(src) {
+  const lines = src.replace(/\r/g, '').split('\n');
+  let out = '', i = 0;
+  const blank = l => !l.trim();
+
+  while (i < lines.length) {
+    const l = lines[i];
+    let m;
+
+    if ((m = l.match(RE_FENCE))) {                        // ```taal ... ```
+      const fence = m[1], lang = m[2], buf = [];
+      i++;
+      while (i < lines.length && !lines[i].trim().startsWith(fence)) buf.push(lines[i++]);
+      i++;
+      out += '<pre>' + (lang ? `<span class="lang">${esc(lang)}</span>` : '') +
+             '<code>' + esc(buf.join('\n')) + '</code></pre>';
+      continue;
+    }
+    if (blank(l)) { i++; continue; }
+    if ((m = l.match(RE_HEAD))) {                         // # kop
+      const n = m[1].length;
+      out += `<h${n}>${inline(m[2])}</h${n}>`; i++; continue;
+    }
+    if (RE_HR.test(l)) { out += '<hr>'; i++; continue; }  // ---
+    if (RE_QUOTE.test(l)) {                               // > citaat
+      const buf = [];
+      while (i < lines.length && RE_QUOTE.test(lines[i])) buf.push(lines[i++].replace(/^\s*>\s?/, ''));
+      out += '<blockquote>' + md(buf.join('\n')) + '</blockquote>';
+      continue;
+    }
+    if (RE_TROW.test(l) && i + 1 < lines.length && RE_TSEP.test(lines[i + 1])) { // | tabel |
+      const cells = s => s.trim().replace(/^\||\|$/g, '').split('|').map(c => c.trim());
+      const align = cells(lines[i + 1]).map(c =>
+        c.startsWith(':') && c.endsWith(':') ? 'center' : c.endsWith(':') ? 'right' : '');
+      const td = (tag, c, j) => `<${tag}${align[j] ? ` style="text-align:${align[j]}"` : ''}>${inline(c)}</${tag}>`;
+      let t = '<thead><tr>' + cells(l).map((c, j) => td('th', c, j)).join('') + '</tr></thead><tbody>';
+      i += 2;
+      while (i < lines.length && RE_TROW.test(lines[i])) t += '<tr>' + cells(lines[i++]).map((c, j) => td('td', c, j)).join('') + '</tr>';
+      out += '<div class="table"><table>' + t + '</tbody></table></div>';
+      continue;
+    }
+    if (RE_LIST.test(l)) {                                // - lijst / 1. lijst
+      const buf = [];
+      while (i < lines.length) {
+        const cur = lines[i], next = lines[i + 1] ?? '';
+        const cont = RE_LIST.test(cur) || /^\s+\S/.test(cur);
+        const gap = blank(cur) && (RE_LIST.test(next) || /^\s+\S/.test(next));
+        if (!cont && !gap) break;
+        buf.push(cur); i++;
+      }
+      out += list(buf);
+      continue;
+    }
+    const buf = [];                                       // alinea
+    do { buf.push(lines[i++]); } while (i < lines.length && !blank(lines[i]) && !startsBlock(lines[i]));
+    out += '<p>' + inline(buf.join('\n')).replace(/\n/g, '<br>') + '</p>';
+  }
+  return out;
+}
+
+// Lijsten met nesting op basis van inspringing, plus taken: - [ ] / - [x]
+function list(lines) {
+  const items = [];
+  for (const l of lines) {
+    const m = l.match(RE_LIST);
+    if (m) items.push({ ind: m[1].length, ord: /\d/.test(m[2]), start: parseInt(m[2], 10), text: l.slice(m[0].length) });
+    else if (items.length && l.trim()) items[items.length - 1].text += '\n' + l.trim();
+  }
+  let k = 0;
+  function level(ind) {
+    const first = items[k];
+    let html = first.ord ? (first.start > 1 ? `<ol start="${first.start}">` : '<ol>') : '<ul>';
+    while (k < items.length && items[k].ind >= ind) {
+      if (items[k].ind === ind && items[k].ord !== first.ord) break; // ander soort lijst: nieuwe lijst
+      if (items[k].ind > ind) { // dieper: in het vorige <li> stoppen
+        html = html.replace(/<\/li>$/, '') + level(items[k].ind) + '</li>';
+        continue;
+      }
+      let t = items[k++].text, box = '';
+      const task = t.match(/^\[([ xX])\]\s+/);
+      if (task) {
+        box = `<input type="checkbox" disabled${task[1] === ' ' ? '' : ' checked'}> `;
+        t = t.slice(task[0].length);
+      }
+      html += '<li' + (task ? ' class="task"' : '') + '>' + box + inline(t).replace(/\n/g, '<br>') + '</li>';
+    }
+    return html + (first.ord ? '</ol>' : '</ul>');
+  }
+  let html = '';
+  while (k < items.length) html += level(items[k].ind);
+  return html;
+}
+// Markdown hooguit één keer per frame opnieuw opbouwen (scheelt veel bij lange antwoorden en bij replay).
+const dirty = new Set();
+function scheduleRender(a) {
+  if (!dirty.size) requestAnimationFrame(() => {
+    keepBottom(() => dirty.forEach(b => b.textEl.innerHTML = md(b.text)));
+    dirty.clear();
+  });
+  dirty.add(a);
+}
+
+// ASCII-animatie: één klok voor alle spinners op de pagina.
+const FRAMES = ['[=     ]', '[==    ]', '[===   ]', '[ ===  ]', '[  === ]', '[   ===]', '[    ==]', '[     =]',
+                '[    ==]', '[   ===]', '[  === ]', '[ ===  ]', '[===   ]', '[==    ]'];
+let frame = 0;
+setInterval(() => {
+  frame = (frame + 1) % FRAMES.length;
+  document.querySelectorAll('.spin').forEach(s => s.textContent = FRAMES[frame]);
+}, 90);
+function spinner() { return el('span', 'spin', FRAMES[frame]); }
+
+function clearStatus() { statusEl?.remove(); statusEl = null; }
+function working(text) {
+  clearStatus();
+  statusEl = add(el('div', 'msg status'));
+  statusEl.append(spinner(), text);
+}
+function finishThinking(a) {
+  if (!a || !a.thinkLive) return;
+  a.thinkLive = false;
+  a.thinkEl.open = false;
+  a.thinkEl.classList.remove('live');
+  a.thinkSum.replaceChildren('Denkproces');
+}
+function assistant() {
+  if (!cur) cur = { el: add(el('div', 'msg assistant')), text: '' };
+  return cur;
+}
+function setBusy(b) {
+  busy = b;
+  sendBtn.textContent = b ? 'Stop' : 'Verstuur';
+  sendBtn.classList.toggle('primary', !b);
+}
+function notice(text) { add(el('div', 'notice', text)); }
+
+// ---------- events van de server ----------
+
+function handle(e) {
+  switch (e.type) {
+    case 'user':
+      clearStatus(); cur = null;
+      if (e.text) add(el('div', 'msg user', e.text));
+      if (e.files?.length) {
+        const row = add(el('div', 'msg user-files'));
+        e.files.forEach(f => row.appendChild(el('span', 'chip', '📄 ' + f)));
+      }
+      scroller.scrollTop = scroller.scrollHeight;
+      setBusy(true);
+      working('wacht op het model');
+      break;
+    case 'status':
+      working(e.text); break;
+    case 'thinking': {
+      clearStatus();
+      const a = assistant();
+      if (!a.thinkBody) {
+        const d = el('details', 'live'); d.open = true;
+        a.thinkSum = d.appendChild(el('summary'));
+        a.thinkSum.append(spinner(), 'Denkt na');
+        a.thinkBody = d.appendChild(el('div', 'body'));
+        a.thinkEl = a.el.appendChild(d);
+        a.thinkLive = true;
+      }
+      keepBottom(() => {
+        a.thinkBody.textContent += e.text;
+        a.thinkBody.scrollTop = a.thinkBody.scrollHeight;
+      });
+      break;
+    }
+    case 'promote': {
+      // geen </think> gekomen: het "denkwerk" was gewoon het antwoord
+      const a = cur;
+      if (!a || !a.thinkEl) break;
+      a.text += a.thinkBody.textContent;
+      a.thinkEl.remove(); a.thinkEl = a.thinkBody = null; a.thinkLive = false;
+      if (!a.textEl) a.textEl = a.el.appendChild(el('div'));
+      scheduleRender(a);
+      break;
+    }
+    case 'token': {
+      clearStatus();
+      const a = assistant();
+      finishThinking(a);
+      if (!a.textEl) a.textEl = a.el.appendChild(el('div'));
+      a.text += e.text;
+      scheduleRender(a);
+      break;
+    }
+    case 'tool_call': {
+      clearStatus(); finishThinking(cur); cur = null;
+      const t = el('div', 'msg tool' + (e.sub ? ' sub' : ''));
+      if (e.sub) t.appendChild(el('span', 'who', '↳ sub-agent ' + e.sub));
+      t.appendChild(el('span', 'name', '⚙ ' + e.name + ' '));
+      // sub_agents: de taken als lijst tonen in plaats van één lange JSON-regel
+      if (e.name === 'sub_agents' && e.args?.taken) {
+        const ol = el('ol', 'tasks');
+        e.args.taken.split('\n').map(s => s.trim()).filter(Boolean).forEach(s => ol.appendChild(el('li', null, s)));
+        if (e.args.velden) t.appendChild(el('span', 'args', 'velden: ' + e.args.velden + (e.args.model ? ' · model: ' + e.args.model : '')));
+        t.appendChild(ol);
+      } else {
+        t.appendChild(el('span', 'args', JSON.stringify(e.args || {})));
+      }
+      add(t);
+      working(e.sub ? `sub-agent ${e.sub}: ${e.name}` : e.name + ' draait');
+      break;
+    }
+    case 'tool_result': {
+      // bij de juiste kaart zetten: sub-agentstappen en het hoofdmodel lopen door elkaar
+      const tools = log.querySelectorAll(e.sub ? '.tool.sub' : '.tool:not(.sub)');
+      const t = tools[tools.length - 1];
+      if (!t) break;
+      const d = el('details'); d.appendChild(el('summary', null, 'resultaat (' + e.text.split('\n').length + ' regels)'));
+      d.appendChild(el('div', 'body', e.text));
+      keepBottom(() => t.appendChild(d));
+      working('model leest het resultaat');
+      break;
+    }
+    case 'confirm': {
+      const box = add(el('div', 'msg confirm pending'));
+      box.appendChild(el('span', null, e.text));
+      const yes = el('button', 'primary', 'Ja, uitvoeren'), no = el('button', null, 'Nee');
+      const answer = ok => { if (send({ type: 'confirm', ok })) { yes.disabled = no.disabled = true; } };
+      yes.onclick = () => answer(true); no.onclick = () => answer(false);
+      box.append(yes, no);
+      if (!replaying) yes.focus();
+      break;
+    }
+    case 'confirmed': {
+      // het antwoord komt altijd van de server terug, ook na een reconnect of vanuit een ander tabblad
+      const box = [...log.querySelectorAll('.confirm.pending')].pop();
+      if (box) {
+        box.classList.remove('pending');
+        box.replaceChildren(el('span', 'stats', e.text + (e.ok ? ' → toegestaan' : ' → geweigerd')));
+      }
+      break;
+    }
+    case 'stats':
+      finishThinking(cur); cur = null;
+      add(el('div', 'msg stats', e.tokens + ' tokens · ' + e.tps.toFixed(1) + ' tok/s'));
+      break;
+    case 'error':
+      clearStatus(); finishThinking(cur); add(el('div', 'msg error', 'Fout: ' + e.text)); break;
+    case 'done':
+      clearStatus(); finishThinking(cur); cur = null; setBusy(false);
+      if (!replaying) { input.focus(); loadConvs(); } // net opgeslagen: lijst bijwerken (titel, volgorde)
+      break;
+    case 'reset':
+      clearLog(); setBusy(false); break;
+    case 'context':
+      showContext(e.tokens || 0, e.max || 0); break;
+    case 'notice':
+      notice(e.text); break;
+    case 'compact': {
+      clearStatus();
+      const box = add(el('div', 'msg compact'));
+      const d = box.appendChild(el('details'));
+      d.appendChild(el('summary', null,
+        `Gesprek samengevat om ruimte te maken (${k(e.tokens)} → ${k(e.max)} tokens) — klik voor de samenvatting`));
+      d.appendChild(el('div', 'body')).innerHTML = md(e.text);
+      break;
+    }
+  }
+}
+
+const k = n => n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n);
+function showContext(used, max) {
+  const box = document.getElementById('ctx');
+  if (!max) return;
+  const pct = Math.min(100, Math.round(used / max * 100));
+  box.style.display = 'inline-flex';
+  box.querySelector('i').style.width = pct + '%';
+  box.querySelector('.num').textContent = `${k(used)} / ${k(max)}`;
+  box.classList.toggle('warn', pct >= 60 && pct < 75);
+  box.classList.toggle('full', pct >= 75);
+}
+
+// ---------- websocket met automatisch herverbinden ----------
+//
+// De server bewaart het gesprek per sessie en nummert elk event (seq). Bij herverbinden
+// sturen we ons sessie-id en het laatste seq dat we hebben; de server stuurt alleen wat we
+// gemist hebben. Na een herlaad van de pagina is lastSeq 0 en komt het hele gesprek terug.
+
+const store = {
+  get(k) { try { return sessionStorage.getItem(k); } catch { return null; } },
+  set(k, v) { try { sessionStorage.setItem(k, v); } catch {} },
+};
+let sid = store.get('agent-sid') || '';
+let lastSeq = 0;
+let ws = null, attempt = 0, retryTimer = null, countdownTimer = null, watchdog = null, hbTimer = null;
+let replaying = false, takenOver = false;
+
+const BACKOFF = [500, 1000, 2000, 4000, 8000, 10000];
+const SILENCE_LIMIT = 45000; // server stuurt elke 20s een hb; langer stil = verbinding dood
+
+function setConn(state, text) {
+  dot.classList.toggle('on', state === 'on');
+  connEl.textContent = text;
+  retryBtn.style.display = state === 'wait' ? 'inline-block' : 'none';
+  sendBtn.disabled = state !== 'on' && !busy;
+}
+
+function send(obj) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+  ws.send(JSON.stringify(obj));
+  return true;
+}
+
+function armWatchdog() {
+  clearTimeout(watchdog);
+  watchdog = setTimeout(() => ws && ws.close(), SILENCE_LIMIT);
+}
+
+function connect() {
+  clearTimeout(retryTimer); clearInterval(countdownTimer);
+  if (takenOver) return;
+  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+  setConn('connecting', attempt ? 'opnieuw verbinden…' : 'verbinden…');
+
+  const url = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host +
+    '/ws?sid=' + encodeURIComponent(sid) + '&since=' + lastSeq;
+  const sock = new WebSocket(url);
+  ws = sock;
+
+  sock.onmessage = m => {
+    if (sock !== ws) return;
+    armWatchdog();
+    const e = JSON.parse(m.data);
+    if (e.type === 'hb') return;
+    if (e.type === 'taken') { takenOver = true; return; }
+    if (e.type === 'deleted') { newConversation(); return; } // dit gesprek is (elders) verwijderd
+    if (e.type === 'info') {
+      // Niet "resumed" = de server stuurt het hele gesprek opnieuw (uit de database, of het is
+      // nieuw): eerst leegmaken, anders staat alles dubbel.
+      if (!e.resumed) { clearLog(); lastSeq = 0; }
+      sid = e.sid; store.set('agent-sid', sid);
+      loadConvs();
+      modelEl.textContent = e.text;
+      setBusy(!!e.busy);
+      attempt = 0;
+      setConn('on', 'verbonden');
+      replaying = true;
+      setTimeout(() => { replaying = false; }, 0); // alles wat in dezelfde batch binnenkomt is replay
+      return;
+    }
+    if (e.seq) {
+      if (e.seq <= lastSeq) return; // al gehad
+      lastSeq = e.seq;
+    }
+    handle(e);
+  };
+
+  sock.onclose = () => {
+    if (sock !== ws) return;
+    clearTimeout(watchdog); clearInterval(hbTimer);
+    ws = null;
+    if (takenOver) {
+      setConn('off', 'geopend in een ander tabblad');
+      retryBtn.textContent = 'Hier verder'; retryBtn.style.display = 'inline-block';
+      return;
+    }
+    scheduleReconnect();
+  };
+
+  sock.onopen = () => {
+    if (sock !== ws) return;
+    armWatchdog();
+    clearInterval(hbTimer);
+    hbTimer = setInterval(() => send({ type: 'hb' }), 20000);
+  };
+}
+
+function scheduleReconnect() {
+  const base = BACKOFF[Math.min(attempt, BACKOFF.length - 1)];
+  const delay = Math.round(base * (1 + Math.random() * 0.3)); // jitter: niet alle tabs tegelijk
+  attempt++;
+  let left = Math.ceil(delay / 1000);
+  setConn('wait', `verbinding weg — opnieuw over ${left}s`);
+  countdownTimer = setInterval(() => {
+    left = Math.max(0, left - 1);
+    setConn('wait', `verbinding weg — opnieuw over ${left}s`);
+  }, 1000);
+  retryTimer = setTimeout(connect, delay);
+}
+
+retryBtn.onclick = () => {
+  if (takenOver) { takenOver = false; retryBtn.textContent = 'Nu proberen'; }
+  attempt = 0; connect();
+};
+// Meteen opnieuw proberen zodra het netwerk terug is of de tab weer zichtbaar wordt.
+window.addEventListener('online', () => { attempt = 0; connect(); });
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && !ws && !takenOver) { attempt = 0; connect(); }
+});
+
+connect();
+
+// ---------- invoer ----------
+
+// ---------- bijlagen (alleen tekst) ----------
+
+const MAX_FILE = 512 * 1024, MAX_BINARY = 20 * 1024 * 1024, MAX_FILES = 10;
+// PDF en afbeeldingen zet de server om naar tekst (PDF-tekst of OCR); die sturen we binair (base64).
+const CONVERT = /\.(pdf|png|jpe?g|gif|webp|bmp)$/i;
+const NOT_TEXT = /\.(ico|svgz|tiff?|heic|docx?|xlsx?|pptx?|odt|ods|odp|zip|7z|rar|gz|tar|exe|dll|so|bin|iso|mp[34]|wav|ogg|mov|avi|mkv|woff2?|ttf)$/i;
+let attached = []; // { name, content } voor tekst, { name, data, size } voor PDF/afbeelding
+let rejected = []; // { name, reason }: blijven zichtbaar tot je ze wegklikt of iets verstuurt
+
+function base64(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result).split(',')[1] || '');
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(file);
+  });
+}
+
+const attachedEl = document.getElementById('attached');
+const fileInput = document.getElementById('file');
+
+function chip(label, detail, cls, onRemove) {
+  const c = el('span', 'chip' + (cls ? ' ' + cls : ''));
+  c.append(el('span', 'fname', label), el('span', 'size', detail));
+  const x = el('button', null, '×');
+  x.type = 'button'; x.title = 'Verwijderen'; x.setAttribute('aria-label', 'Verwijder ' + label);
+  x.onclick = onRemove;
+  c.appendChild(x);
+  return c;
+}
+const mb = n => n >= 1024 * 1024 ? (n / 1024 / 1024).toFixed(1) + ' MB' : Math.round(n / 1024) + ' KB';
+
+function renderAttached() {
+  attachedEl.replaceChildren(
+    ...attached.map((f, i) => chip(
+      (f.data ? (/\.pdf$/i.test(f.name) ? '📕 ' : '🖼 ') : '📄 ') + f.name,
+      f.data ? mb(f.size) + ' · wordt omgezet' : k(f.content.length) + ' tekens', '',
+      () => { attached.splice(i, 1); renderAttached(); })),
+    ...rejected.map((f, i) => chip('⚠ ' + f.name, f.reason, 'bad',
+      () => { rejected.splice(i, 1); renderAttached(); })),
+  );
+}
+
+async function addFiles(list) {
+  const reject = (name, reason) => { rejected = rejected.filter(r => r.name !== name); rejected.push({ name, reason }); };
+  for (const f of list) {
+    if (attached.length >= MAX_FILES) { reject(f.name, `max ${MAX_FILES} bestanden tegelijk`); continue; }
+    attached = attached.filter(a => a.name !== f.name);
+    rejected = rejected.filter(r => r.name !== f.name);
+
+    if (CONVERT.test(f.name) || /^image\/(png|jpeg|gif|webp|bmp)$/.test(f.type) || f.type === 'application/pdf') {
+      if (f.size > MAX_BINARY) { reject(f.name, `te groot (${mb(f.size)}, max 20 MB)`); continue; }
+      attached.push({ name: f.name, data: await base64(f), size: f.size });
+      continue;
+    }
+    if (NOT_TEXT.test(f.name) || /^(image|audio|video)\//.test(f.type)) {
+      reject(f.name, 'dit soort bestand kan niet (wel: tekst, PDF, afbeeldingen)'); continue;
+    }
+    if (f.size > MAX_FILE) { reject(f.name, `te groot (${mb(f.size)}, max 512 KB)`); continue; }
+    const text = await f.text();
+    if (text.includes('\u0000') || (text.match(/�/g) || []).length > 3) {
+      reject(f.name, 'geen tekstbestand'); continue;
+    }
+    attached.push({ name: f.name, content: text });
+  }
+  renderAttached();
+  input.focus();
+}
+
+document.getElementById('attach').onclick = () => fileInput.click();
+fileInput.onchange = () => { addFiles(fileInput.files); fileInput.value = ''; };
+input.addEventListener('paste', e => {
+  if (e.clipboardData?.files?.length) { e.preventDefault(); addFiles(e.clipboardData.files); }
+});
+// Slepen: overlay tonen zolang er bestanden boven de pagina hangen.
+let dragDepth = 0;
+const hasFiles = e => [...(e.dataTransfer?.types || [])].includes('Files');
+document.addEventListener('dragenter', e => { if (hasFiles(e)) { dragDepth++; document.body.classList.add('dragging'); } });
+document.addEventListener('dragleave', e => { if (hasFiles(e) && --dragDepth <= 0) { dragDepth = 0; document.body.classList.remove('dragging'); } });
+document.addEventListener('dragover', e => { if (hasFiles(e)) e.preventDefault(); });
+document.addEventListener('drop', e => {
+  if (!hasFiles(e)) return;
+  e.preventDefault(); dragDepth = 0; document.body.classList.remove('dragging');
+  addFiles(e.dataTransfer.files);
+});
+
+// ---------- versturen ----------
+
+document.getElementById('form').onsubmit = ev => {
+  ev.preventDefault();
+  if (busy) { send({ type: 'stop' }); return; }
+  const text = input.value.trim();
+  if (!text && !attached.length && !rejected.length) return;
+  // Slash-commando's zoals in Claude Code (alleen als het hele bericht een commando is)
+  const cmd = findCommand(text);
+  if (cmd) { closePalette(); input.value = ''; input.style.height = ''; cmd.run(); return; }
+  const files = attached.map(({ name, content, data }) => data ? { name, data } : { name, content });
+  // Geweigerde bestanden gaan ook mee (alleen naam + reden), zodat het model weet wat er niet lukte.
+  if (!send({ type: 'prompt', text, files, rejected })) return; // niet verbonden: tekst en bijlagen blijven staan
+  input.value = ''; input.style.height = '';
+  attached = []; rejected = []; renderAttached();
+  setBusy(true);
+};
+input.addEventListener('keydown', ev => {
+  if (paletteKey(ev)) return; // pijltjes/Enter/Tab/Esc in de commandolijst
+  if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); document.getElementById('form').requestSubmit(); }
+});
+input.addEventListener('input', () => {
+  input.style.height = ''; input.style.height = input.scrollHeight + 'px';
+  updatePalette();
+});
+input.addEventListener('blur', () => setTimeout(closePalette, 150)); // na een klik in de lijst
+
+// ---------- commando's (/) ----------
+// Zoals in Claude Code: typ / en kies met pijltjes; Enter voert uit, Tab vult aan, Esc sluit.
+
+const COMMANDS = [
+  { name: '/nieuw', alias: ['/new', '/reset', '/clear'], desc: 'Nieuw gesprek beginnen', run: () => newConversation() },
+  { name: '/compact', alias: [], desc: 'Gesprek samenvatten om context vrij te maken',
+    run: () => { if (!busy && send({ type: 'compact' })) setBusy(true); } },
+  { name: '/gesprekken', alias: ['/lijst'], desc: 'Lijst met gesprekken tonen of verbergen', run: () => toggleSide() },
+  { name: '/hernoem', alias: ['/rename'], desc: 'Dit gesprek een andere titel geven', run: () => startRename(sid) },
+  { name: '/verwijder', alias: ['/delete'], desc: 'Dit gesprek verwijderen', run: () => deleteConversation(sid, true) },
+  { name: '/bijlage', alias: ['/upload'], desc: 'Bestand toevoegen (tekst, PDF, afbeelding)', run: () => fileInput.click() },
+];
+const paletteEl = document.getElementById('palette');
+let matches = [], selected = 0;
+
+function findCommand(text) {
+  const t = text.trim().toLowerCase();
+  return COMMANDS.find(c => c.name === t || c.alias.includes(t));
+}
+function updatePalette() {
+  const v = input.value;
+  if (!v.startsWith('/') || /\s/.test(v)) { closePalette(); return; }
+  const q = v.toLowerCase();
+  matches = COMMANDS.filter(c => c.name.startsWith(q) || c.alias.some(a => a.startsWith(q)));
+  if (!matches.length) { closePalette(); return; }
+  selected = Math.min(selected, matches.length - 1);
+  paletteEl.replaceChildren(...matches.map((c, i) => {
+    const it = el('div', 'item' + (i === selected ? ' sel' : ''));
+    it.setAttribute('role', 'option');
+    it.append(el('span', 'name', c.name), el('span', 'desc', c.desc));
+    it.onmousedown = e => { e.preventDefault(); runPalette(i); };
+    it.onmousemove = () => { if (selected !== i) { selected = i; updatePalette(); } };
+    return it;
+  }), el('div', 'hint', '↑↓ kiezen · Enter uitvoeren · Tab aanvullen · Esc sluiten'));
+  paletteEl.classList.add('open');
+}
+function closePalette() { paletteEl.classList.remove('open'); matches = []; selected = 0; }
+function runPalette(i) {
+  const c = matches[i];
+  closePalette();
+  input.value = ''; input.style.height = '';
+  c.run();
+}
+function paletteKey(ev) {
+  if (!matches.length) return false;
+  if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
+    selected = (selected + (ev.key === 'ArrowDown' ? 1 : matches.length - 1)) % matches.length;
+    updatePalette();
+  } else if (ev.key === 'Enter' && !ev.shiftKey) {
+    runPalette(selected);
+  } else if (ev.key === 'Tab') {
+    input.value = matches[selected].name; closePalette();
+  } else if (ev.key === 'Escape') {
+    closePalette();
+  } else return false;
+  ev.preventDefault();
+  return true;
+}
+
+// ---------- gesprekkenlijst ----------
+// Elk gesprek is een sessie op de server, opgeslagen in SQLite. Een ander gesprek kiezen =
+// verbinden met dat sessie-id; de server stuurt het hele gesprek opnieuw.
+
+const convsEl = document.getElementById('convs');
+const searchEl = document.getElementById('search');
+let convs = [];
+
+async function loadConvs() {
+  try {
+    const r = await fetch('/api/conversations');
+    if (r.ok) { convs = await r.json(); renderConvs(); }
+  } catch { /* server even weg: de lijst blijft zoals hij was */ }
+}
+
+function groupOf(ms) {
+  const day = 86400000, start = new Date(); start.setHours(0, 0, 0, 0);
+  if (ms >= start.getTime()) return 'Vandaag';
+  if (ms >= start.getTime() - day) return 'Gisteren';
+  if (ms >= start.getTime() - 7 * day) return 'Afgelopen 7 dagen';
+  if (ms >= start.getTime() - 30 * day) return 'Afgelopen 30 dagen';
+  return 'Ouder';
+}
+
+function renderConvs() {
+  const q = searchEl.value.trim().toLowerCase();
+  const items = convs.filter(c => !q || c.title.toLowerCase().includes(q));
+  const out = [];
+  let group = '';
+  for (const c of items) {
+    const g = groupOf(c.updated);
+    if (g !== group) { out.push(el('div', 'grp', g)); group = g; }
+    out.push(convItem(c));
+  }
+  if (!items.length) out.push(el('div', 'none', q ? 'Niets gevonden' : 'Nog geen gesprekken'));
+  convsEl.replaceChildren(...out);
+}
+
+function convItem(c) {
+  const row = el('div', 'conv' + (c.id === sid ? ' active' : ''));
+  row.dataset.id = c.id;
+  row.title = c.title + '\n' + new Date(c.updated).toLocaleString('nl-NL');
+  row.appendChild(el('span', 'ttl', c.title || '(zonder titel)'));
+  const acts = row.appendChild(el('span', 'acts'));
+  const ren = acts.appendChild(el('button', null, '✎'));
+  ren.type = 'button'; ren.title = 'Hernoemen'; ren.setAttribute('aria-label', 'Hernoem ' + c.title);
+  const del = acts.appendChild(el('button', null, '🗑'));
+  del.type = 'button'; del.title = 'Verwijderen'; del.setAttribute('aria-label', 'Verwijder ' + c.title);
+  ren.onclick = e => { e.stopPropagation(); startRename(c.id); };
+  del.onclick = e => {
+    e.stopPropagation();
+    // Twee keer klikken om te verwijderen: geen browser-popup, wel een vangnet.
+    if (del.classList.contains('sure')) { deleteConversation(c.id); return; }
+    del.classList.add('sure'); del.textContent = 'Zeker?';
+    setTimeout(() => { del.classList.remove('sure'); del.textContent = '🗑'; }, 3000);
+  };
+  row.onclick = () => { if (!row.querySelector('input')) openConversation(c.id); };
+  return row;
+}
+
+function startRename(id) {
+  const c = convs.find(x => x.id === id);
+  if (!c) { notice('Dit gesprek staat nog niet in de lijst (stel eerst een vraag)'); return; }
+  if (document.body.classList.contains('side-closed') || matchMedia('(max-width: 899px)').matches) openSide();
+  const row = convsEl.querySelector(`.conv[data-id="${CSS.escape(id)}"]`);
+  if (!row) return;
+  const box = el('input');
+  box.value = c.title; box.maxLength = 120; box.setAttribute('aria-label', 'Nieuwe titel');
+  row.replaceChildren(box);
+  box.focus(); box.select();
+  let done = false;
+  const finish = async save => {
+    if (done) return; done = true;
+    const t = box.value.trim();
+    if (save && t && t !== c.title) {
+      await fetch(`/api/conversations/${encodeURIComponent(id)}/title`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: t }),
+      }).catch(() => {});
+    }
+    loadConvs();
+  };
+  box.onkeydown = e => {
+    if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+    if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+  };
+  box.onblur = () => finish(true);
+}
+
+async function deleteConversation(id, fromCommand) {
+  if (!convs.some(c => c.id === id)) {
+    if (fromCommand) newConversation(); // nog niet opgeslagen: gewoon opnieuw beginnen
+    return;
+  }
+  const r = await fetch(`/api/conversations/${encodeURIComponent(id)}`, { method: 'DELETE' }).catch(() => null);
+  if (!r || !r.ok) { notice('Verwijderen lukte niet'); return; }
+  if (id === sid) newConversation();
+  loadConvs();
+}
+
+function openConversation(id) {
+  closeSideMobile();
+  if (id === sid) return;
+  switchTo(id);
+}
+function newConversation() { switchTo(''); input.focus(); }
+
+// Wisselen: oude verbinding dicht (die sessie loopt op de server gewoon door), nieuwe open.
+function switchTo(id) {
+  sid = id; store.set('agent-sid', sid);
+  lastSeq = 0;
+  clearLog(); setBusy(false);
+  const old = ws; ws = null;
+  clearTimeout(watchdog); clearInterval(hbTimer); clearTimeout(retryTimer); clearInterval(countdownTimer);
+  if (old) old.close();
+  takenOver = false; attempt = 0;
+  connect();
+  renderConvs();
+}
+
+function openSide() {
+  document.body.classList.remove('side-closed');
+  document.body.classList.add('side-open');
+}
+function closeSideMobile() { document.body.classList.remove('side-open'); }
+function toggleSide() {
+  if (matchMedia('(max-width: 899px)').matches) document.body.classList.toggle('side-open');
+  else document.body.classList.toggle('side-closed');
+}
+
+document.getElementById('new').onclick = () => { closeSideMobile(); newConversation(); };
+document.getElementById('toggle').onclick = toggleSide;
+document.getElementById('backdrop').onclick = closeSideMobile;
+searchEl.addEventListener('input', renderConvs);
+searchEl.addEventListener('keydown', e => { if (e.key === 'Escape') { searchEl.value = ''; renderConvs(); } });
+</script>
+</body>
+</html>
